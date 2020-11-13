@@ -20,8 +20,12 @@ from numba import jit
 from scipy.optimize import curve_fit
 
 
-# Extract metadata from imageJ processsed .tif files
 def ImageJinfo2dict(ImageJinfo):
+    """
+    Extract metadata from imageJ processsed .tif files
+    :param ImageJinfo: imagej converted metadata
+    :return: dictionary of metadata
+    """
     if "\n" in ImageJinfo:
         ImageJinfo = ImageJinfo.split("\n")
     ImageJdict = {}
@@ -38,24 +42,39 @@ def ImageJinfo2dict(ImageJinfo):
     return ImageJdict
 
 
-# fourier shift of image
 def shift_image(img, shift):
+    """
+    correct xy drift between phase contrast image and fluorescent image(s)
+    :param img: input image
+    :param shift: subpixel xy drift
+    :return: drift corrected image
+    """
     offset_image = ndi.fourier_shift(np.fft.fftn(img), shift)
     offset_image = np.fft.ifftn(offset_image)
     offset_image = np.round(offset_image.real)
     offset_image[offset_image <= 0] = 10
+
     return offset_image.astype(np.uint16)
 
 
-# plot logarithmic colormap
-def plot_spectrum(im_fft):
+def _plot_spectrum(im_fft):
+    """
+    spectrum plot, deprecated
+    :param im_fft:
+    :return:
+    """
     plt.figure()
     plt.imshow(np.abs(im_fft), norm=LogNorm(vmin=5), cmap="Greys")
     plt.colorbar()
 
 
-# wrap around fft
 def fft(img, subtract_mean=True):
+    """
+    fast Fourier transform module
+    :param img: input image
+    :param subtract_mean:
+    :return: FFT transformed image
+    """
     warnings.filterwarnings("ignore")
     if subtract_mean:
         img = img - np.mean(img)
@@ -63,7 +82,13 @@ def fft(img, subtract_mean=True):
 
 
 def fft_reconstruction(fft_img, filters):
-    # reconstruct image after FFT band pass filtering.
+    """
+    reconstruct image after FFT band pass filtering.
+    :param fft_img: input FFT transformed image
+    :param filters: low/high frequency bandpass filters
+    :return: bandpass filtered, restored phase contrast image
+    """
+
     warnings.filterwarnings("ignore")
     if len(filters) > 0:
         for filter in filters:
@@ -76,7 +101,17 @@ def fft_reconstruction(fft_img, filters):
 
 
 def bandpass_filter(pixel_microns, img_width=2048, img_height=2048, high_pass_width=0.2, low_pass_width=20):
-    # bandpass filter on frequency space
+
+    """
+
+    :param pixel_microns: pixel unit length
+    :param img_width: width of image by pixel
+    :param img_height: height of image by pixel
+    :param high_pass_width: 1/f where f is the lower bound of high frequency signal
+    :param low_pass_width: 1/f where f is the upper bound of low frequency signal
+    :return: high/low bandpass filters
+
+    """
     u_max = round(1 / pixel_microns, 3) / 2
     v_max = round(1 / pixel_microns, 3) / 2
     u_axis_vec = np.linspace(-u_max / 2, u_max / 2, img_width)
@@ -104,7 +139,15 @@ def is_integer(x):
 
 
 
-def normalize_img(img, dtype=16, adjust_gamma=True, gamma=1):
+def adjust_image(img, dtype=16, adjust_gamma=True, gamma=1):
+    """
+    adjust image data depth and gamma value
+    :param img: input image
+    :param dtype: bit depth, 8, 12 or 16
+    :param adjust_gamma: whether or not correct gamma
+    :param gamma: gamma value
+    :return: adjusted image
+    """
     if is_integer(dtype) & (dtype > 2):
         n_range = (0, 2 ** dtype - 1)
     else:
@@ -116,18 +159,33 @@ def normalize_img(img, dtype=16, adjust_gamma=True, gamma=1):
 
 
 # compute shape-index of given image and convert float output to 8bit
-def shape_indexing_normalization(img, shape_indexing_sigma=2):
-    surface = feature.shape_index(img, sigma=shape_indexing_sigma)
-    surface = np.nan_to_num(surface, copy=True)
-    surface = (exposure.equalize_hist(surface) * 255).astype(np.uint8)
-    return (surface)
+def shape_index_conversion(img, shape_indexing_sigma=2):
+    """
+    Jan J Koenderink and Andrea J van Doorn proposed a simple solution for numeric representation of local
+    curvature, here we use an 8-bit converted shape index measure as the basis to infer different parts of a cell body
+    :param img: input image
+    :param shape_indexing_sigma: sigma for computing Hessian eigenvalues
+    :return: shape index converted image (8-bit)
+    """
+    shape_indexed = feature.shape_index(img, sigma=shape_indexing_sigma)
+    shape_indexed = np.nan_to_num(shape_indexed, copy=True)
+    shape_indexed = (exposure.equalize_hist(shape_indexed) * 255).astype(np.uint8)
+    return shape_indexed
 
 
-def init_segmentation(maskimg, shape_indexing_sigma=2, min_particle_size=40):
+def init_segmentation(img, shape_indexing_sigma=2, min_particle_size=40):
+    """
+    primary image segmentation that splits disconnected pixel patches into Clusters
+
+    :param img: input image, usually phase contrast data
+    :param shape_indexing_sigma:
+    :param min_particle_size:
+    :return:
+    """
     #
-    shape_indexed = shape_indexing_normalization(maskimg, shape_indexing_sigma=shape_indexing_sigma)
+    shape_indexed = shape_index_conversion(img, shape_indexing_sigma=shape_indexing_sigma)
     #
-    ph_gau = filters.gaussian(maskimg, sigma=1)
+    ph_gau = filters.gaussian(img, sigma=1)
     ph_binary_glob = (ph_gau < filters.threshold_isodata(ph_gau))*1
     ph_binary_local = (ph_gau < filters.threshold_local(ph_gau, method="mean", block_size=15))
     ph_binary_local[morphology.dilation(ph_binary_glob, morphology.disk(5)) == 0] = 0
@@ -215,7 +273,7 @@ def rolling_ball_bg(image, ball):
     return (bg)
 
 
-def optimize_bbox(img_shape,bbox,edge_width = 5):
+def optimize_bbox(img_shape, bbox, edge_width = 8):
     (rows,columns) = img_shape
     (x1,y1,x2,y2) = bbox
     return(max(0,x1-edge_width),max(0,y1-edge_width),\
@@ -411,7 +469,7 @@ def cubecount_with_return(mask, px, py, val):
     return n, retlist
 
 
-def skeleton_analysis(mask, pruning=False, min_branch_length=5, max_iterations=50):
+def skeleton_analysis(mask, pruning=False, min_branch_length=5, max_iterations=30):
     skeleton = morphology.skeletonize(mask)*2
     endpoints, branch_points, skeleton = locate_nodes(skeleton)
     anchor_points = endpoints+branch_points
@@ -463,22 +521,6 @@ def skeleton_analysis(mask, pruning=False, min_branch_length=5, max_iterations=5
             return [], skeleton
     else:
         return [], skeleton
-
-
-def unit_perpendicular_vector(data, closed=True, rotate=0):
-    if closed:
-        p1 = np.concatenate([data[1:], [data[0]]])
-        p2 = np.concatenate([[data[-1]], data[:-1]])
-    else:
-        p1 = data[1:]
-        p2 = data[:-1]
-    dxy = p1 - p2
-    ang = np.arctan2(dxy.T[1], dxy.T[0]) + 0.5 * np.pi + rotate
-    dx, dy = np.cos(ang), np.sin(ang)
-    unit_dxy = np.array([dx, dy]).T
-    if not closed:
-        unit_dxy = np.concatenate([[unit_dxy[0]], unit_dxy])
-    return unit_dxy
 
 
 def interpolate_2Dmesh(data_array, smooth=1):
@@ -535,7 +577,10 @@ def contour_optimization(contour, sobel):
 """
 
 
-def contour_optimization(input_contour, input_sobel, step=0.5, edge_cutoff=0.2):
+def contour_optimization(input_contour,
+                         input_sobel,
+                         step=0.5,
+                         edge_cutoff=0.2):
     sobel = input_sobel.copy()
     contour = input_contour.copy()
     converged = np.ones(len(contour))
@@ -592,22 +637,25 @@ def contour_optimization(input_contour, input_sobel, step=0.5, edge_cutoff=0.2):
     contour[converged == 1] = input_contour[converged == 1]
     contour[dist >= 1.5] = input_contour[dist >= 1.5]
     contour[-1] = contour[0]
-    return spline_approximation(contour, n=len(contour), smooth_factor=5), converged
+
+    # even number segments
+    return spline_approximation(contour,
+                                n=2*len(contour),
+                                smooth_factor=5), converged
 
 
 def unit_perpendicular_vector(data, closed=True):
-    if closed:
-        p1 = np.concatenate([data[1:], [data[0]]])
-        p2 = np.concatenate([[data[-1]], data[:-1]])
-    else:
-        p1 = data[1:]
-        p2 = data[:-1]
+
+    p1 = data[1:]
+    p2 = data[:-1]
     dxy = p1 - p2
     ang = np.arctan2(dxy.T[1], dxy.T[0]) + 0.5 * np.pi
     dx, dy = np.cos(ang), np.sin(ang)
     unit_dxy = np.array([dx, dy]).T
     if not closed:
         unit_dxy = np.concatenate([[unit_dxy[0]], unit_dxy])
+    else:
+        unit_dxy = np.concatenate([unit_dxy,[unit_dxy[-1]]])
     return unit_dxy
 
 
@@ -670,8 +718,124 @@ def direct_intersect_distance(skeleton, contour):
     return np.concatenate([[0], dists, [0]])
 
 
+def suppress_extreme_edge_points(edge, tolerance=1):
+    dif = edge[1:] - edge[:-1]
+    dist = np.sqrt(np.sum(dif ** 2, axis=1))
+    extremities = np.where(dist > tolerance)[0]
+    new_edge = edge.copy()
+    if len(extremities) > 0:
+        for i in extremities:
+            new_edge[i + 1] = 2 * edge[i] - edge[i - 1]
+    return new_edge
+
+
+def straighten_by_orthogonal_lines(contour, midline, length, width, unit_micron=0.05):
+    # estimate profile mesh size
+    median_width = np.median(width)
+    N_length = int(round(length / unit_micron))
+    N_width = int(round(median_width / unit_micron))
+
+    # interpolate midline
+    midline = spline_approximation(midline, N_length, smooth_factor=0, closed=False)
+
+    # divide contour
+    #if contour[-1] == contour[-2]:
+        #contour = contour[:-1]
+    half_contour_1, half_contour_2 = divide_contour_by_midline(midline, contour[:-1])
+
+    # infer orthogonal vectors
+    ortho_unit_vectors = unit_perpendicular_vector(midline)
+
+    # generate orthogonal profile lines for all midline points except for the polar ones
+    l1 = orthogonal_intersection_point(midline, half_contour_1,
+                                       precomputed_orthogonal_vector=ortho_unit_vectors)
+
+    l2 = orthogonal_intersection_point(midline, half_contour_2,
+                                       precomputed_orthogonal_vector=ortho_unit_vectors)
+
+    # suppress extreme events
+    # opt_l1 = suppress_extreme_edge_points(l1)
+    # opt_l2 = suppress_extreme_edge_points(l2)
+    # opt_l1 = l1
+    # opt_l2 = l2
+    dl = (l2 - l1) / N_width
+    mult_mat = np.tile(np.arange(N_width + 1), (len(l1), 1))
+    mat_x = l1[:, 0][:, np.newaxis] + mult_mat * dl[:, 0][:, np.newaxis]
+    mat_y = l1[:, 1][:, np.newaxis] + mult_mat * dl[:, 1][:, np.newaxis]
+    profile_mesh = np.array([mat_x, mat_y])
+    return l1, l2, profile_mesh, midline
+
+
+def divide_contour_by_midline(midline, contour):
+    dist1 = distance_matrix(contour, midline[0]).flatten()
+    dist2 = distance_matrix(contour, midline[-1]).flatten()
+
+    id1, id2 = np.argsort(dist1)[:2]
+    id3, id4 = np.argsort(dist2)[:2]
+
+    contour_cp = contour.copy()
+    if max(id1, id2) < max(id3, id4):
+        term_p1 = max(id1, id2)
+        if abs(id3 - id4) == 1:
+            term_p2 = max(id3, id4) + 1
+        elif abs(id3 - id4) > 1:
+            term_p2 = max(id3, id4) + 2
+        contour_cp = np.insert(contour_cp, term_p1, midline[0], axis=0)
+        contour_cp = np.insert(contour_cp, term_p2, midline[-1], axis=0)
+
+    else:
+        term_p1 = max(id3, id4)
+        if abs(id1 - id2) == 1:
+            term_p2 = max(id1, id2) + 1
+        elif abs(id1 - id2) > 1:
+            term_p2 = max(id1, id2) + 2
+        contour_cp = np.insert(contour_cp, term_p1, midline[-1], axis=0)
+        contour_cp = np.insert(contour_cp, term_p2, midline[0], axis=0)
+
+    if term_p1 == term_p2:
+        raise ValueError('Two endpoints are identical!')
+    else:
+        pos1, pos2 = sorted([term_p1, term_p2])
+        #print(id1, id2, id3, id4, pos1, pos2, len(contour_cp))
+        half_contour_1 = contour_cp[pos1:min(pos2 + 1, len(contour_cp) - 1)]
+        half_contour_2 = np.concatenate([contour_cp[pos2:], contour_cp[:pos1 + 1]])
+    return half_contour_1, half_contour_2
+
+
+def orthogonal_intersection_point(midline,
+                                  outerline,
+                                  precomputed_orthogonal_vector=None,
+                                  min_dist=0.001):
+    v1, v2 = outerline[:-1], outerline[1:]
+    skel_x, skel_y = midline.T
+    if precomputed_orthogonal_vector is None:
+        intersect_x, intersect_y = intersect_matrix(midline, outerline)
+    else:
+        intersect_x, intersect_y = intersect_matrix(midline, outerline,
+                                                    orthogonal_vectors=precomputed_orthogonal_vector)
+    dx_v1 = intersect_x - v1.T[0][:, np.newaxis]
+    dx_v2 = intersect_x - v2.T[0][:, np.newaxis]
+    dy_v1 = intersect_y - v1.T[1][:, np.newaxis]
+    dy_v2 = intersect_y - v2.T[1][:, np.newaxis]
+    dx = dx_v1 * dx_v2
+    dy = dy_v1 * dy_v2
+
+    dist_x = skel_x[np.newaxis, :] - intersect_x
+    dist_y = skel_y[np.newaxis, :] - intersect_y
+
+    non_bounadry_points = np.where(np.logical_and(dy >= 0, dx >= 0))
+    dist_matrix = np.sqrt(dist_x ** 2 + dist_y ** 2)
+    dist_matrix[non_bounadry_points] = np.inf
+    dist_matrix[dist_matrix <= min_dist] = np.inf
+    nearest_id_x = np.argsort(dist_matrix, axis=0)[:1]
+    nearest_id_y = np.linspace(0, dist_matrix.shape[1] - 1, dist_matrix.shape[1]).astype(int)
+    pos_list = np.array([intersect_x[nearest_id_x[0], nearest_id_y],
+                         intersect_y[nearest_id_x[0], nearest_id_y]]).T
+    return pos_list
+
+
 def measure_length(data, pixel_microns=1):
-    v1,v2 = data[:-1],data[1:]
+    v1,v2 = data[:-1], data[1:]
     length = np.sqrt(np.sum((np.array(v1) - np.array(v2)) ** 2, axis=1)).sum()*pixel_microns
     return(length)
 
@@ -686,8 +850,10 @@ def spline_approximation(init_contour, n=200, smooth_factor=1, closed=True):
     return np.array([x_new, y_new]).T
 
 
-def find_poles(smoothed_skeleton, smoothed_contour,
-               find_pole1=True, find_pole2=True):
+def find_poles(smoothed_skeleton,
+               smoothed_contour,
+               find_pole1=True,
+               find_pole2=True):
     # find endpoints and their nearest neighbors on a midline
     length = len(smoothed_skeleton)
     extended_pole1 = [smoothed_skeleton[0]]
@@ -736,15 +902,13 @@ def find_poles(smoothed_skeleton, smoothed_contour,
 def extend_skeleton(smoothed_skeleton, smoothed_contour,
                     find_pole1=True, find_pole2=True, interpolation_factor=1):
     # initiate approximated tip points
-    new_pole1, new_pole2, smoothed_skeleton = find_poles(smoothed_skeleton, smoothed_contour,
+    new_pole1, new_pole2, smoothed_skeleton = find_poles(smoothed_skeleton,
+                                                         smoothed_contour,
                                                          find_pole1=find_pole1,
                                                          find_pole2=find_pole2)
-
-    pole1, pole2 = smoothed_skeleton[0], smoothed_skeleton[-1]
-    dist1, dist2 = distance(pole1, new_pole1), distance(pole2, new_pole2)
-    dist_skel = len(smoothed_skeleton)
-    estimated_total_length = int((dist1 + dist2 + dist_skel) * interpolation_factor)
-    extended_skeleton = np.concatenate([new_pole1, smoothed_skeleton, new_pole2])
+    extended_skeleton = np.concatenate([new_pole1,
+                                        smoothed_skeleton,
+                                        new_pole2])
     return spline_approximation(extended_skeleton,
                                 n=int(interpolation_factor * len(smoothed_skeleton)),
                                 smooth_factor=1, closed=False)
@@ -765,8 +929,12 @@ def find_midpoints(smoothed_skeleton, smoothed_contour, max_dxy=1):
     return updated_skeleton
 
 
-def intersect_matrix(line, contour):
-    dxy = unit_perpendicular_vector(line, closed=False)
+def intersect_matrix(line, contour,
+                     orthogonal_vectors=None):
+    if orthogonal_vectors is None:
+        dxy = unit_perpendicular_vector(line, closed=False)
+    else:
+        dxy = orthogonal_vectors
     v1, v2 = contour[:-1], contour[1:]
     x1, y1 = v1.T
     x2, y2 = v2.T
@@ -905,7 +1073,7 @@ def bend_angle(data, window=10):
     p3 = np.concatenate((data[window:],data[0:window])).T
     p1p2 = p1[0]*1+p1[1]*1j - (p2[0]*1+p2[1]*1j)
     p1p3 = p1[0]*1+p1[1]*1j - (p3[0]*1+p3[1]*1j)
-    return np.angle(p1p3/p1p2, deg = True)
+    return np.angle(p1p3/p1p2, deg=True)
 
 
 def bend_angle_open(data, window=5):
@@ -914,7 +1082,7 @@ def bend_angle_open(data, window=5):
     p3 = data[2*window:].T
     p1p2 = p1[0]*1+p1[1]*1j - (p2[0]*1+p2[1]*1j)
     p2p3 = p2[0]*1+p2[1]*1j - (p3[0]*1+p3[1]*1j)
-    return (np.angle(p2p3/p1p2,deg = True))
+    return np.angle(p2p3/p1p2, deg=True)
 
 
 def standard_rod_complexity(area, L, window, perimeter, correction_factor=0.75):
@@ -937,18 +1105,6 @@ def estimate_r_from_area(area,L):
     c = -area
     return (-b+np.sqrt(b**2-4*a*c))/(2*a)
 
-
-def normalized_contour_complexity(cell, window=1):
-    contour = cell.contour
-    angles = np.abs(bend_angle(contour, window=window))
-    angles[angles <= 15] = 0
-    complexity_cell = 0.5*angles.sum()/len(contour)
-    area = cell.regionprop.area
-    L = cell.regionprop.major_axis_length
-    skeleton_L = len(np.nonzero(cell.skeleton)[0])
-    L = max(L, skeleton_L)
-    standard_complexity = standard_rod_complexity(area, L, window, 2*len(contour))
-    return complexity_cell/standard_complexity
 
 def line_length(line):
     v1 = line[:-1]
@@ -976,9 +1132,20 @@ def bilinear_interpolate_numpy(im, x, y):
     return np.round((Ia*wa) + (Ib*wb) + (Ic*wc) + (Id*wd), 4)
 
 
+def expand_contour(contour, scale=0.5):
+    """
+    enlarge or shrink contour
+    :param contour:
+    :param scale:
+    :return:
+    """
+    dxy = unit_perpendicular_vector(contour, closed=True)
+    return contour - scale*dxy
+
+
 def measure_along_strip(line, img, width = 7, subpixel = 0.5):
     warnings.filterwarnings("ignore")
-    unit_dxy = unit_perpendicular_vector(line, closed = False)
+    unit_dxy = unit_perpendicular_vector(line, closed=False)
     width_normalized_dxy = unit_dxy * subpixel
     copied_img = img.copy()
     data = bilinear_interpolate_numpy(copied_img, line.T[0], line.T[1])
@@ -1007,7 +1174,7 @@ def straighten_cell(img, midline, width):
         v2 = midline-dxy
         p1 = bilinear_interpolate_numpy(copied_img, v1.T[0], v1.T[1])
         p2 = bilinear_interpolate_numpy(copied_img, v2.T[0], v2.T[1])
-        data = np.vstack([p1,data,p2])
+        data = np.vstack([p1, data, p2])
     return data
 
 def straighten_cell_normalize_width(img, midline, width,
@@ -1015,7 +1182,10 @@ def straighten_cell_normalize_width(img, midline, width,
                                     remove_cap = 0):
 
     #remove polar regions if necessary
-    midline = spline_approximation(midline, int(len(midline)/subpixel), smooth_factor=1, closed=False)
+    midline = spline_approximation(midline,
+                                   int(len(midline)/subpixel),
+                                   smooth_factor=1,
+                                   closed=False)
 
 
     width = np.interp(np.linspace(0, 1, int(len(width)/subpixel)), xp=np.linspace(0, 1, len(width)), fp=width)
@@ -1025,8 +1195,8 @@ def straighten_cell_normalize_width(img, midline, width,
     # decapped_midline = midline[remove_cap + 2:-remove_cap - 2]
     # decapped_width = width[remove_cap + 2:-remove_cap - 2]
 
-    decapped_midline = midline[remove_cap: len(midline)-remove_cap]
-    decapped_width = width[remove_cap: len(midline)-remove_cap]
+    decapped_midline = midline[remove_cap: len(midline)-remove_cap].copy()
+    decapped_width = width[remove_cap: len(midline)-remove_cap].copy()
     decapped_width[0] = decapped_width[1]
     decapped_width[-1] = decapped_width[-2]
 
@@ -1169,7 +1339,9 @@ def moving_window_average(data, window_size=5):
     else:
         cum_sum = np.cumsum(np.insert(data, 0, 0))
         mw_average = (cum_sum[window_size:]-cum_sum[:-window_size])/float(window_size)
-        return np.interp(np.linspace(0, 1, len(data)), xp=np.linspace(0, 1, len(mw_average)), fp=mw_average)
+        return np.interp(np.linspace(0, 1, len(data)),
+                         xp=np.linspace(0, 1, len(mw_average)),
+                         fp=mw_average)
 
 
 def normalize_data1D(data, re_orient=False, base=10):
@@ -1178,6 +1350,20 @@ def normalize_data1D(data, re_orient=False, base=10):
         if re_orient:
             data = np.flip(data)
     normalized_data = (data-data.min()+base)/(data.max()-data.min()+base)
+    return normalized_data
+
+
+def normalize_data_2D(data, re_orient=True, percentile_low_bound=1):
+    half_l = int(0.5 * data.shape[1])
+    if data[:, :half_l].mean() < data[:, -half_l:].mean():
+        if re_orient:
+            data = np.flip(data, axis=1)
+
+    th_low = np.percentile(data, percentile_low_bound)
+
+    normalized_data = (data - th_low) / (data.max() - th_low)
+    normalized_data[normalized_data > 1] = 1
+    normalized_data[normalized_data < 0] = 0
     return normalized_data
 
 
@@ -1193,18 +1379,22 @@ def pad_data(array, length, max_len=15, max_pixel=512, normalize=True, base=50):
 
 def scanning_disk():
     cube = np.ones((3,3))
-    x,y = np.where(cube>0)
-    x-=1
-    y-=1
-    weights = np.array([0.5,1,0.5,1,1,1,0.5,1,0.5])
-    return x,y,weights
+    x, y = np.where(cube > 0)
+    x -= 1
+    y -= 1
+    weights = np.array([0.5, 1, 0.5,
+                        1, 1, 1,
+                        0.5, 1, 0.5])
+    return x, y, weights
+
 
 def measure_along_contour(cell, channel):
     contour = cell.optimized_contour[:-1]
-    data = filters.gaussian(cell.data[channel],sigma=1, preserve_range=True)
-    x,y,weights = scanning_disk()
-    _x = x[:,np.newaxis]+contour[:,0]
-    _y = y[:,np.newaxis]+contour[:,1]
-    interpolated = bilinear_interpolate_numpy(data,_x,_y)
-    interpolated *= weights[:,np.newaxis]
-    return np.sum(interpolated,axis=0)/7
+    data = filters.gaussian(cell.data[channel], sigma=1,
+                            preserve_range=True)
+    x, y, weights = scanning_disk()
+    _x = x[:, np.newaxis]+contour[:, 0]
+    _y = y[:, np.newaxis]+contour[:, 1]
+    interpolated = bilinear_interpolate_numpy(data, _x, _y)
+    interpolated *= weights[:, np.newaxis]
+    return np.sum(interpolated, axis=0)/7

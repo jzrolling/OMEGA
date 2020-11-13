@@ -61,7 +61,7 @@ def measure_symmetry(data, weighted):
         weighted_center = 0.5
     avg_1 = data[:int(round(weighted_center * len(data)))].sum()
     avg_2 = data[int(round(weighted_center * len(data))):].sum()
-    ratio = max(avg_1,avg_2)/min(avg_1,avg_2)
+    ratio = max(avg_1, avg_2)/min(avg_1, avg_2)
     return 2-2*sigmoid(ratio-1)
 
 """
@@ -193,6 +193,35 @@ def average_bending_energy(contour, window=3):
     angles = bend_angle(contour[:-1], window=window)*np.pi/180
     ks = (np.sin(angles)**2).sum()/len(contour)
     return round(ks, 4)
+
+
+def bending_energy(data, window=3):
+    """
+    Bending energy func by Bowie and Young, 1977
+    BE = (1/P) * (sum(K(p)^2 * dp))
+    P: contour length
+    dp: unit contour arc length
+    K(p): the rate of change in tangent direction θ of the contour,
+          as a function of the arc length p (dp)
+          K(p) = d_theta/dp
+    :param data:
+    :param window:
+    :return:
+    """
+    p1 = np.concatenate((data[-window:], data[:-window])).T
+    p2 = data.copy().T
+    p3 = np.concatenate((data[window:], data[0:window])).T
+    p1p2 = p1[0]*1+p1[1]*1j - (p2[0]*1+p2[1]*1j)
+    p1p3 = p1[0]*1+p1[1]*1j - (p3[0]*1+p3[1]*1j)
+
+    d_theta = np.angle(p1p3/p1p2)
+    d_p = np.sqrt(np.sum(np.square(p2-p1).T, axis=1))
+    P = d_p.sum()
+    K_p = d_theta/d_p
+
+    BE = np.sum(K_p**2/d_p)/P
+
+    return BE
 
 
 def circularity(regionprop):
@@ -331,3 +360,16 @@ def symmetric_point(data1d):
     if x >= 0.5:
         x = 1 - x
     return round(x, 3)
+
+
+def normalized_contour_complexity(cell, window=1):
+    contour = cell.init_contour
+    angles = np.abs(bend_angle(contour, window=window))
+    angles[angles <= 15] = 0
+    complexity_cell = 0.5*angles.sum()/len(contour)
+    area = cell.regionprop.area
+    L = cell.regionprop.major_axis_length
+    skeleton_L = len(np.nonzero(cell.skeleton)[0])
+    L = max(L, skeleton_L)
+    standard_complexity = standard_rod_complexity(area, L, window, 2*len(contour))
+    return complexity_cell/standard_complexity
