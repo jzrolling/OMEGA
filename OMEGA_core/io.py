@@ -102,6 +102,9 @@ def process_single_input(imagefile,
         save_processed_images(obj, header, dest_folder)
     if save_segmentation_result:
         plot_segmented_image(obj, savefig=True, dpi=100, lw=0.3, scale=0.4,
+                             show_branched=False,
+                             show_accepted=True,
+                             show_discarded=False,
                              filename="{}{}_segmentation_result.tif".format(dest_folder, header))
     if save_cells:
         pickle_dump(cell_list, header+'_cells', dest_folder)
@@ -391,6 +394,7 @@ def _export_data(cell_list,
             axial_padded = []
             axial_normalized = []
             axial_straighten = []
+            axial_straighten_width_normalized = []
             lateral_normalized = []
             channel_dict = {}
             for cell in cell_list:
@@ -413,16 +417,24 @@ def _export_data(cell_list,
                                                   normalize=False, max_len=12)))
 
                 # straightened data, necessary for making spherocylindrical projection plot
-                straightened_data = cell.measurements.signal_measurements[key]['straighten_normalized']
+                straightened_data = cell.measurements.signal_measurements[key]['straighten']
                 straightened_data = normalize_data_2D(straightened_data,
                                                       percentile_low_bound=0,
                                                       re_orient=True)
                 axial_straighten.append(straightened_data)
 
+                #
+                width_normalized = cell.measurements.signal_measurements[key]['straighten_normalized']
+                width_normalized = normalize_data_2D(width_normalized,
+                                                     percentile_low_bound=0,
+                                                     re_orient=True)
+                axial_straighten_width_normalized.append(width_normalized)
+            process_folder
             channel_dict['padded_axial_data'] = np.array(axial_padded)
             channel_dict['length_normalized_axial_data'] = np.array(axial_normalized)
             channel_dict['width_normalized_lateral_data'] = np.array(lateral_normalized)
             channel_dict['straightened_axial_data'] = axial_straighten
+            channel_dict['straightened_width_normalized_axial_data'] = axial_straighten_width_normalized
             cell_profiles[key] = channel_dict
             counter = 1
     if save_data:

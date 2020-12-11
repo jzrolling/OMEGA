@@ -7,6 +7,7 @@ def center_of_mass(data, xcor):
     center = np.sum((data) * xcor) / np.sum((data))
     return np.round(center, 3)
 
+
 def normalize_array(data, min_val, max_val, base=0):
     return (data-min_val+base)/(max_val-min_val+base)
 

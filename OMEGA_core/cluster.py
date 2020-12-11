@@ -172,7 +172,7 @@ class Cluster:
         # label particles
         self.labeled_seeds = sk.measure.label(init_seeds, connectivity=1)
 
-    def create_seeds_from_branched_particle(self, image_obj, cell):
+    def create_seeds_from_branched_particle(self, cell):
         """
         This function forces the segmentation of particles of complex shapes (eg. branched) using more stringent
         segmentation criterion.
@@ -220,8 +220,7 @@ class Cluster:
 
     def create_seeds_from_vsnap(self, cell):
         """
-        This function forces the segmentation of V-shaped particles (eg. branched) using seeds inferred from
-        a Euclidean distance transformed mask.
+        This function forces the segmentation of V-shaped particles
 
         Note that the current solution performs suboptimally and often yields inaccurate segmentation
         Future adjustments with supervised SVM or NN are needed to reach higher segmentation accuracy and to
@@ -238,13 +237,30 @@ class Cluster:
         self.mask_clumpy_zone = np.zeros(cell.shape_index.shape)
         self.pixel_microns = cell.pixel_microns
         self.config = cell.config['cluster']
-
         self.mask = cell.mask * 1
-        dist_transform = ndi.distance_transform_edt(self.mask)
-        threshold = np.percentile(dist_transform[dist_transform > 0], 85)
-        init_seeds = dist_transform > threshold
-        init_seeds = morphology.remove_small_objects(init_seeds, min_size=10)
-        self.labeled_seeds = measure.label(init_seeds, connectivity=2)
+        self.frangi = cell.frangi
+
+        """
+        import configurations for Cel subdivision.
+        """
+        use_frangi = bool(int(self.config['use_frangi_split_branch']))
+        radius = int(self.config['delink_radius'])
+
+        if not use_frangi:
+            ref_image = self.shape_indexed
+            low_th = int(self.config['shape_index_vshape_low_bound'])
+            high_th = int(self.config['shape_index_vshape_high_bound'])
+        else:
+            ref_image = self.frangi
+            low_th = float(self.config['frangi_branched_low_bound'])
+            high_th = float(self.config['frangi_branched_high_bound'])
+        min_seed_size = int(self.config['seed_size_min'])
+
+        init_seeds = (ref_image < high_th) & (ref_image > low_th)
+        init_seeds = morphology.remove_small_holes(init_seeds, area_threshold=30) * 1
+        init_seeds = morphology.opening(init_seeds, morphology.disk(radius)).astype(bool)
+        init_seeds = morphology.remove_small_objects(init_seeds, min_size=min_seed_size)
+        self.labeled_seeds = measure.label(init_seeds, connectivity=1)
         del init_seeds
 
     def segmentation(self):
@@ -356,10 +372,21 @@ class Cluster:
         minimal particle size filter
         """
         min_area = int(self.config['area_pixel_low'])
+        max_area = int(self.config['area_pixel_high'])
+        max_width = float(self.config['width_high'])/self.pixel_microns
+
         for label, particle in self.particles.items():
             _clump_area = self.mask_clumpy_zone[np.where(self.watershed == label)]
+
+            # some basic discriminators
+            in_clump = (len(np.nonzero(_clump_area))/len(_clump_area) > 0.01)*1
+            too_small = (particle.area < min_area)*1
+            too_large = (particle.area > max_area)*1
+            too_bulky = ((particle.solidity > 0.75) & \
+                         (particle.minor_axis_length > 3*max_width))*1
             # modification needed
-            if (len(np.nonzero(_clump_area))/len(_clump_area) <= 0.01) & (particle.area >= min_area):
+            if np.sum([in_clump, too_small,
+                       too_large, too_bulky]) == 0:
                 x0, y0, _x0, _y0 = self.bbox
                 x3, y3, x4, y4 = optimize_bbox(self.phase.shape, particle.bbox)
                 optimized_bbox = [x3 + x0, y3 + y0, x4 + x0, y4 + y0]
@@ -392,28 +419,26 @@ class Cluster:
                 # forced segmentation of branched object
                 if cell.branched and not cell.discarded:
 
-                    # directly transfers data from the branched Cell object to make a Cluster
-                    mini_cluster = Cluster(image_obj=image_obj, cluster_regionprop=cell.regionprop)
+                    # directly transfer data from the branched Cell object to make a Cluster
+                    mini_cluster = Cluster(image_obj=image_obj,
+                                           cluster_regionprop=cell.regionprop)
 
-                    # subdivides cell
+                    # subdivide cell
 
-                    mini_cluster.create_seeds_from_branched_particle(image_obj, cell)
-                    """
                     if cell.vshaped:
                         mini_cluster.create_seeds_from_vsnap(cell)
                     else:
                         mini_cluster.create_seeds_from_branched_particle(cell)
-                    """
 
                     # Standard cluster segmentation and boundary optimization
                     mini_cluster.segmentation()
-                    mini_cluster.compute_boundary_metrics(image_obj)
-
-                    for boundary_id, boundary in self.boundary_pairwise_dict.items():
-                        metrics = np.array(list(boundary.metrics.values())).reshape(1, -1)
-                        normalized_metrics = image_obj.boundary_normalizer.transform(metrics)
-                        boundary.false_boundary = image_obj.boundary_prediction_model.predict(normalized_metrics)[0]
-                        boundary.false_boundary = bool(boundary.false_boundary)
+                    if len(self.boundary_pairwise_dict)> 0:
+                        for boundary_id, boundary in self.boundary_pairwise_dict.items():
+                            if len(boundary.metrics.values()) > 0:
+                                metrics = np.array(list(boundary.metrics.values())).reshape(1, -1)
+                                normalized_metrics = image_obj.boundary_normalizer.transform(metrics)
+                                false_boundary = image_obj.boundary_prediction_model.predict(normalized_metrics)[0]
+                                boundary.false_boundary = bool(false_boundary)
                     mini_cluster.remove_false_boundaries()
 
                     # append updated Cell objects to the Cluster.cells dictionary
@@ -423,8 +448,10 @@ class Cluster:
                         optimized_bbox = [x3 + x0, y3 + y0, x4 + x0, y4 + y0]
                         optimized_mask = mini_cluster.watershed[x3:x4, y3:y4] == minilabel
                         if miniparticle.area >= min_area:
-                            newcell = Cell(image_obj, self.label, max_label, optimized_mask,
-                                           optimized_bbox, regionprop=miniparticle)
+                            newcell = Cell(image_obj, self.label, max_label,
+                                           optimized_mask,
+                                           optimized_bbox,
+                                           regionprop=miniparticle)
                             newcell.find_contour()
                             newcell.extract_skeleton()
                             sub_dict[max_label] = newcell

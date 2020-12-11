@@ -247,10 +247,19 @@ class Cell:
                 self.width_lists.append(width)
 
     def morphological_filter(self):
-
-        morph_filter_keys = ['area', 'eccentricity', 'aspect_ratio',
-                             'solidity', 'circularity',
-                             'convexity', 'average_bending_energy',
+        """
+        primary Cell object filter function using particle morphological descriptors. Empirically speaking,
+        this function alone is sufficient to remove most of the falsely segmented objects, therefore no secondary
+        vetting step is employed by the current edition of OMEGA, although an additional trained classifier could
+        in theory further increase the segmentation accuracy.
+        :return: None
+        """
+        morph_filter_keys = ['area', 'eccentricity',
+                             'aspect_ratio',
+                             'solidity',
+                             'circularity',
+                             'convexity',
+                             'average_bending_energy',
                              'normalized_bending_energy',
                              'min_curvature',
                              'rough_Length',
@@ -263,6 +272,9 @@ class Cell:
             low_threshold = float(self.config['cell'][low_threshold_config_key])
             high_threshold = float(self.config['cell'][high_threshold_config_key])
             like_cell *= in_range(val, low_threshold, high_threshold)
+
+        if self.test_mode:
+            print(self.vshaped, like_cell)
         if not like_cell:
             self.branched = True
 
@@ -271,8 +283,13 @@ class Cell:
         print('Function currently unavailable')
 
     def generate_measurements(self):
+        """
+        Signal and morphological profiling of Cell objects.
+        :return: None
+        """
         # does not support branched cell measurements yet
         # will include graph based branch analysis shortly
+
         if not self.branched and not self.discarded:
             if self.midlines == [] or self.width_lists == []:
                 if self.test_mode:
@@ -280,10 +297,13 @@ class Cell:
                                                                                        self.cell_label))
                 self.discarded = True
             else:
+                correct_drift = bool(int(self.config['cell']['correct_cell_drift']))
+                if correct_drift:
+                    self._correct_xy_drift()
                 try:
                     # signal profiling
                     unit_micron = float(self.config['cell']['profiling_unit_pixel'])
-                    expanded_contour = expand_contour(self.optimized_contour, scale=1)
+                    expanded_contour = expand_contour(self.optimized_contour, scale=0.5)
                     l1, l2, profiling_mesh,\
                     midline_interp = straighten_by_orthogonal_lines(expanded_contour,
                                                                     self.midlines[0],
@@ -312,6 +332,10 @@ class Cell:
                     self.discarded = True
 
     def compiled_cell_process(self):
+        """
+        Bundle of Cell functions
+        :return:
+        """
         self.optimize_contour()
         self.morphological_filter()
         self.generate_midline_no_branch()
@@ -322,6 +346,10 @@ class Cell:
         self.skeleton = None
 
     def _correct_xy_drift(self):
+        """
+        XY-drift correction at cellular level, may introduce numeric instability
+        :return:
+        """
         if not self.branched and not self.discarded:
             # invert phase contrast data
 
@@ -332,15 +360,20 @@ class Cell:
                 if channel != self.mask_channel_name:
                     shift, error, _diff = registration.phase_cross_correlation(ref_img, img,
                                                                                upsample_factor=10)
-                    if np.max(np.abs(shift)) <= 2:
+                    if np.max(np.abs(shift)) <= 3:
                         self.data[channel] = shift_image(img, shift)
-                        if len(self.fluorescent_puncta[channel]) != 0:
+                        if len(self.fluorescent_puncta) != 0:
                             puncta_info = self.fluorescent_puncta[channel]
                             puncta_info[:, 0] += shift[0]
                             puncta_info[:, 1] += shift[1]
                             self.fluorescent_puncta[channel] = puncta_info
 
     def _update_signal(self, channel):
+        """
+        post analysis signal update
+        :param channel: data channel
+        :return: None
+        """
         midline = self.midlines[0]
         width = self.width_lists[0]
         mask = self.mask

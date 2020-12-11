@@ -358,14 +358,15 @@ class Image:
         if not boundary_annotation:
             self.boundary_prediction_model = pk.load(open(predictor, 'rb'))
             self.boundary_normalizer = pk.load(open(normalizer, 'rb'))
-            if len(self.boundary_stats) == 1:
-                self.boundary_stats = np.array(self.boundary_stats).reshape(1, -1)
-            norm_boundary_stats = self.boundary_normalizer.transform(self.boundary_stats)
-            boundary_prediction = self.boundary_prediction_model.predict(norm_boundary_stats)
-            counter = 0
-            for idx, cluster in self.clusters.items():
-                counter = cluster.boundary_classification(counter, boundary_prediction)
-                cluster.remove_false_boundaries()
+            if len(self.boundary_stats) > 0:
+                if len(self.boundary_stats) == 1:
+                    self.boundary_stats = np.array(self.boundary_stats).reshape(1, -1)
+                norm_boundary_stats = self.boundary_normalizer.transform(self.boundary_stats)
+                boundary_prediction = self.boundary_prediction_model.predict(norm_boundary_stats)
+                counter = 0
+                for idx, cluster in self.clusters.items():
+                    counter = cluster.boundary_classification(counter, boundary_prediction)
+                    cluster.remove_false_boundaries()
 
     def cell_segmentation(self,
                           split_branches=True,

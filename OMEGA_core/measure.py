@@ -77,7 +77,13 @@ class Measurement:
             channel_data['segmented_measurements'] = divede_cell_pos(channel_data['axial_mean'], length)
             self.signal_measurements[channel] = channel_data
 
-    def update_signal(self, data, channel, midline, width, mask, length, profiling_mesh):
+    def update_signal(self, data,
+                      channel,
+                      midline,
+                      width,
+                      mask,
+                      length,
+                      profiling_mesh):
         """
         update existing data
 
