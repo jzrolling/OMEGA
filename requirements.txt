@@ -48,8 +48,6 @@ nimfa==1.4.0
 notebook==6.1.5
 numba==0.51.2
 numpy==1.19.4
-OMEGA==0.0.1
--e git+https://github.com/jzrolling/OMEGA@4773c394ca7dfdd995a8d9d97916643a396c28fc#egg=OMEGA_micro
 packaging==20.4
 pandas==1.1.4
 pandocfilters==1.4.3
